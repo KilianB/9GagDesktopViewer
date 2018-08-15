@@ -1,0 +1,19 @@
+.imageTitle {
+	-fx-font-size: 26px;
+	-fx-font-weight: bold;
+	-fx-text-fill: #7a7a7a;
+}
+
+.backgroundColor{
+	-fx-background-color:#333;
+}
+
+.jfx-hamburger StackPane {
+	-fx-background-color: white;
+}
+
+.postLabelColor{
+	-fx-text-fill: gray;
+	-icons-color: gray;
+	-fx-fill: -icons-color;
+}

@@ -1,0 +1,15 @@
+.tiny{
+	-fx-font-size: 0.5em;
+}
+
+.small{
+	-fx-font-size: 1em;
+}
+
+.medium{
+	-fx-font-size: 1.75em;
+}
+
+.large{
+	-fx-font-size: 3em;
+}

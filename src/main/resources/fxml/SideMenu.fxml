@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import com.jfoenix.controls.JFXListView?>
+<?import com.jfoenix.controls.JFXToggleButton?>
+<?import com.jfoenix.controls.JFXTextField?>
+<?import com.jfoenix.controls.JFXButton?>
+
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.StackPane?>
+<?import java.lang.String?>
+<?import de.jensd.fx.glyphs.fontawesome.*?>
+<?import javafx.geometry.Insets?>
+
+<StackPane fx:id="root" xmlns:fx="http://javafx.com/fxml/1"
+	xmlns="http://javafx.com/javafx/2.2">
+	<styleClass>
+		<String fx:value="side-menu" />
+	</styleClass>
+	<JFXListView fx:id="sideList">
+		<Label fx:id="hot">
+			<graphic>
+				<StackPane
+					styleClass="custom-jfx-list-view-icon-container">
+					<FontAwesomeIconView glyphName="FIRE"
+						fx:id="hotIcon" size="2em" styleClass="custom-jfx-list-view-icon" />
+				</StackPane>
+			</graphic>
+			Hot
+		</Label>
+		<Label fx:id="trending">
+			<graphic>
+				<StackPane
+					styleClass="custom-jfx-list-view-icon-container">
+					<FontAwesomeIconView glyphName="LINE_CHART"
+						fx:id="trendingIcon" size="2em"
+						styleClass="custom-jfx-list-view-icon" />
+				</StackPane>
+			</graphic>
+			Trending
+		</Label>
+		<Label fx:id="fresh">
+			<graphic>
+				<StackPane
+					styleClass="custom-jfx-list-view-icon-container">
+					<FontAwesomeIconView glyphName="CLOCK_ALT"
+						fx:id="freshIcon" size="2em"
+						styleClass="custom-jfx-list-view-icon" />
+				</StackPane>
+			</graphic>
+			Fresh
+		</Label>
+
+		
+		<JFXTextField labelFloat="true" fx:id="customSection"
+			promptText="Custom Section">
+			<padding>
+				<Insets top="15.0" />
+			</padding>
+		</JFXTextField>
+			<Label fx:id = "jumpToSection" text="Jump To Section"  contentDisplay="CENTER"/>
+			<JFXToggleButton fx:id="nightModeToggle"
+			text="Night Mode" toggleColor="#868686" toggleLineColor="#bcbcbc" />
+			
+			<Label fx:id="stats">
+			<graphic>
+				<StackPane
+					styleClass="custom-jfx-list-view-icon-container">
+					<FontAwesomeIconView glyphName="BOOK"
+						fx:id="freshIcon" size="2em"
+						styleClass="custom-jfx-list-view-icon" />
+				</StackPane>
+			</graphic>
+			Stats
+		</Label>
+	</JFXListView>
+
+</StackPane>

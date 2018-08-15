@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.scene.layout.*?>
+<?import javafx.scene.control.*?>
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.image.*?>
+
+<StackPane fx:id="root" xmlns:fx="http://javafx.com/fxml/1"
+	xmlns="http://javafx.com/javafx/2.2">
+	<ScrollPane fx:id="scrollPane" fitToHeight="true"
+		fitToWidth="true" hbarPolicy="NEVER" pannable="true">
+		<content>
+			<VBox fx:id="backgroundPane" alignment="CENTER"
+				prefHeight="200.0" prefWidth="100.0" spacing="20.0"
+				styleClass="backgroundColor">
+				<ImageView fx:id="backgroundImage"></ImageView>
+				<padding>
+					<Insets bottom="50.0" />
+					<Insets top="10.0" />
+				</padding>
+			</VBox>
+		</content>
+	</ScrollPane>
+</StackPane>
