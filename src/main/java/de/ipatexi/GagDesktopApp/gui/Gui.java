@@ -1,9 +1,11 @@
 package de.ipatexi.GagDesktopApp.gui;
 
-import com.github.kilianB.matcher.SingleImageMatcher;
+import java.io.IOException;
+
 import com.jfoenix.controls.JFXDecorator;
 import com.jfoenix.svg.SVGGlyph;
 import com.jfoenix.svg.SVGGlyphLoader;
+
 import io.datafx.controller.flow.Flow;
 import io.datafx.controller.flow.container.DefaultFlowContainer;
 import io.datafx.controller.flow.context.FXMLViewFlowContext;
@@ -14,8 +16,6 @@ import javafx.geometry.Rectangle2D;
 import javafx.scene.Scene;
 import javafx.stage.Screen;
 import javafx.stage.Stage;
-
-import java.io.IOException;
 
 public class Gui extends Application {
 
@@ -57,8 +57,6 @@ public class Gui extends Application {
 		
 		Scene scene = new Scene(decorator, width, height);
 
-		SingleImageMatcher imageMatcher = SingleImageMatcher.createDefaultMatcher();
-		
 		Flow flow = new Flow(MainController.class);
 		
 		flowContext = new ViewFlowContext();

@@ -7,327 +7,396 @@ import java.io.InputStream;
 import java.math.BigInteger;
 import java.net.MalformedURLException;
 import java.net.URL;
-import java.sql.Connection;
-import java.sql.DatabaseMetaData;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.Statement;
 import java.util.ArrayList;
-import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
+import java.util.Map.Entry;
+import java.util.PriorityQueue;
+import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.SynchronousQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.locks.ReentrantLock;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import javax.imageio.ImageIO;
 
-import org.h2.jdbcx.JdbcDataSource;
 import org.json.JSONArray;
+import org.json.JSONException;
 import org.json.JSONObject;
 import org.json.JSONTokener;
 
-import com.github.kilianB.hashAlgorithms.DifferenceHash;
-import com.github.kilianB.hashAlgorithms.DifferenceHash.Precision;
-import com.github.kilianB.hashAlgorithms.HashingAlgorithm;
-import com.github.kilianB.matcher.Hash;
-import com.github.kilianB.matcher.ImageMatcher;
+import com.github.kilianB.dataStrorage.tree.Result;
+import com.github.kilianB.hashAlgorithms.PerceptiveHash;
+import com.github.kilianB.matcher.DatabaseImageMatcher;
 
 import de.ipatexi.GagDesktopApp.database.DatabaseManager;
-import de.ipatexi.GagDesktopApp.gag.PostItem.Tag;
+import de.ipatexi.GagDesktopApp.gag.post.PostItem;
 import de.ipatexi.GagDesktopApp.util.DaemonThreadFactory;
-
 
 public class GagParser {
 
-	enum Section{
-		HOT,
-		TRENDING,
-		NEW
+	enum Section {
+		HOT, TRENDING, NEW
 	};
-	
+
 	private final String currentSection = Section.TRENDING.toString();
 	private final String BASE_URL = "https://9gag.com/v1/group-posts/group/default/type/";
 
 	private DatabaseManager dbManager;
 
-	
-	
-	private int maxThreads = 20;
-	private ThreadPoolExecutor boundCachedThreadPoolExecutor;
-	
-	
 	/**
 	 * Download image meta data from 9gag
 	 */
 	boolean scrap = false;
-	
+
+	/**
+	 * Maximum threads while scrapping info.
+	 */
+	private int maxThreads = 4;
+
+	private int scrappingRecursionDepth = 1000;
+
+	/*---------------------------------*/
+
 	/**
 	 * Download the final images from 9gag
 	 */
-	boolean download = false;
-	
-	
+	private boolean download = false;
+
+	private boolean downloadMaxResolution = true;
+
+	private File downloadFolder = new File("G:\\gagImages");
+
+	/*---------------------------------*/
+
 	boolean calculateImageSimilarity = true;
-	
-	
+
+	private ThreadPoolExecutor boundCachedThreadPoolExecutor;
+
 	public static void main(String[] args) {
-		new GagParser();
-		
-		
-		
+		try {
+			new GagParser();
+		} catch (SQLException e) {
+			e.printStackTrace();
+		}
 	}
 
+	public GagParser() throws SQLException {
 
-	public GagParser() {
-			
-		
 		dbManager = new DatabaseManager();
-		
+
 		/*
 		 * Create a thread pool executor handling all tasks of the parser
 		 */
-		boundCachedThreadPoolExecutor = new ThreadPoolExecutor(0, maxThreads,60,TimeUnit.SECONDS,
-				new SynchronousQueue<Runnable>(),
-				new DaemonThreadFactory());
-		
-			//Create second table for tags
-			
-			
-			//Create third table for tags
-			
-			
-			// Entry point. retrieve first 10 posts + end id.
-			
-			
-			if(scrap)
-				scrap9GagContent(currentSection.toLowerCase(),"",0);
-			
-			if(download)
-				downloadImage();
-			
-			if(calculateImageSimilarity)
-				calculateImageSimilarity();
-	}
-	
-	
-	
-	
-	int scrappingRecursionDepth = 1000;
-	
-	
-	
-	/**
-	 * 9 gag exposes information of it's posts in JSON format. 
-	 * The JSON contains meta information e.g. upvote count path to the image tags etc ...
-	 * Download the information in preparation for future download of the images. 
-	 * 
-	 * @param content 
-	 */
-	private void scrap9GagContent(String sectionEndpoint,String tokenQuery,int currentDepth) {
-		
-		//Construct the target url to query
-		try {
-			URL content = new URL(BASE_URL+sectionEndpoint + tokenQuery);
+		boundCachedThreadPoolExecutor = new ThreadPoolExecutor(0, maxThreads, 60, TimeUnit.SECONDS,
+				new SynchronousQueue<Runnable>(), new DaemonThreadFactory());
 
-			if(currentDepth > scrappingRecursionDepth){
+		// Create second table for tags
+
+		// Create third table for tags
+
+		// Entry point. retrieve first 10 posts + end id.
+
+		if (scrap)
+			scrap9GagContent(currentSection.toLowerCase(), "", 0);
+
+		if (download)
+			downloadImage();
+
+		if (calculateImageSimilarity)
+			calculateImageSimilarity();
+	}
+
+	/**
+	 * 9 gag exposes information of it's posts in JSON format. The JSON contains
+	 * meta information e.g. upvote count path to the image tags etc ... Download
+	 * the information in preparation for future download of the images.
+	 * 
+	 * @param content
+	 * @throws SQLException
+	 */
+	/**
+	 * 
+	 * @param sectionEndpoint endpoint (Trending, Hot, Fresh)
+	 * @param tokenQuery      (optional) search term
+	 * @param currentDepth    current depth for recursive scraping
+	 * @throws SQLException
+	 */
+	private void scrap9GagContent(String sectionEndpoint, String tokenQuery, int currentDepth) throws SQLException {
+		// Construct the target url to query
+		try {
+			URL content = new URL(BASE_URL + sectionEndpoint + tokenQuery);
+
+			if (currentDepth > scrappingRecursionDepth) {
 				return;
 			}
-						
-			try (InputStream is = content.openStream()){
+
+			try (InputStream is = content.openStream()) {
 				JSONTokener tokener = new JSONTokener(is);
 				JSONObject obj = new JSONObject(tokener);
 
 				JSONObject data = (JSONObject) obj.get("data");
-				
-				//Do some reassignments to get the effective final state required by lambdas
+
+				// Do some reassignments to get the effective final state required by lambdas
 				String pathToNextData = data.getString("nextCursor");
 				int nextDepth = ++currentDepth;
-				
-				
-				//The new path is known. We can already spawn the next thread.
-				
-				if(pathToNextData != null){
-					boundCachedThreadPoolExecutor.execute(()->{
-						scrap9GagContent(sectionEndpoint,"?" + pathToNextData,nextDepth);
+
+				// The new path is known. We can already spawn the next thread.
+
+				if (pathToNextData != null && !boundCachedThreadPoolExecutor.isShutdown()) {
+					boundCachedThreadPoolExecutor.execute(() -> {
+						try {
+							scrap9GagContent(sectionEndpoint, "?" + pathToNextData, nextDepth);
+						} catch (SQLException e) {
+							e.printStackTrace();
+						}
 					});
 				}
-
 				JSONArray postData = data.getJSONArray("posts");
-				
+
 				for (int i = 0; i < postData.length(); i++) {
 					JSONObject postObj = postData.getJSONObject(i);
-					//System.out.println(postObj);
+					// System.out.println(postObj);
 
 					PostItem item = PostItem.parseItem(postObj);
-					
 					dbManager.addPostItem(item);
-				}	
+				}
+			} catch (JSONException j) {
+				if (j.getMessage().contains("JSONObject[\"nextCursor\"] not found")) {
+					System.out.println("Done");
+					boundCachedThreadPoolExecutor.shutdown();
+				} else {
+					j.printStackTrace();
+				}
 			} catch (IOException e) {
 				e.printStackTrace();
 			}
 		} catch (MalformedURLException e1) {
 			e1.printStackTrace();
 		}
-		
-		
-	
 	}
 
-	
-	
-
-	
-	
 	int bitRes = 64;
-	
-	
-	//Download image data
-	private void downloadImage(){
-		
-		File imageDir = new File("images/");
-		imageDir.mkdir();
-		
-		HashingAlgorithm hash = new DifferenceHash(bitRes,Precision.Double);
-		
-		String query = "SELECT uId,contentURL FROM POSTS WHERE type = 'Photo'AND ImageHash = ''";
-		try {
-			
-			ReentrantLock lock = new ReentrantLock();
-			ResultSet rs = conn.createStatement().executeQuery(query);
-	
-			ExecutorService executor = Executors.newFixedThreadPool(8);
-			ArrayList<Future> futures = new ArrayList<Future>();
-			for(int i = 0; i < 8; i++){
-				
-				Future f = executor.submit(() ->{
-				lock.lock();
-				
-				try {
-					while(rs.next()){
-						int uId =  rs.getInt(1);
-						String contentURL = rs.getString(2);
-						lock.unlock();
-						
-						try {
-							BufferedImage image = ImageIO.read(new URL(contentURL));
-							
-							ImageIO.write(image, "png", new File("images/" + uId+ ".png"));
-							
-							BigInteger hashValue = hash.hash(image).getHashValue();
 
-							updateImageHash.setString(1, hashValue.toString(16));
-							updateImageHash.setInt(2, uId);
-							updateImageHash.executeUpdate();
-							
-							System.out.println(uId);
-						
-						} catch (IOException e) {
-							if(lock.isHeldByCurrentThread())
-								lock.unlock();
-							e.printStackTrace();
-						}
-						lock.lock();
+	// Download image data
+	private void downloadImage() {
+		downloadFolder.mkdir();
+
+		AtomicInteger counter = new AtomicInteger(0);
+
+		try {
+			Map<String, String> imagesToDownload = dbManager.getImageDownloadURLs(downloadMaxResolution);
+
+			ThreadPoolExecutor executor = (ThreadPoolExecutor) Executors.newFixedThreadPool(8);
+
+			ConcurrentLinkedDeque<String> queue = new ConcurrentLinkedDeque<>(imagesToDownload.keySet());
+			List<Future<Void>> waitForFinish = new ArrayList<>();
+
+			for (int i = 0; i < executor.getMaximumPoolSize(); i++) {
+
+				waitForFinish.add(executor.submit(() -> {
+					String key = null;
+					while ((key = queue.poll()) != null) {
+						String url = imagesToDownload.get(key);
+						BufferedImage image = ImageIO.read(new URL(url));
+						ImageIO.write(image, "png", new File(downloadFolder.getAbsolutePath() + "/" + key + ".jpg"));
+						System.out.println(counter.getAndIncrement() + "/" + imagesToDownload.size());
 					}
-					
-				} catch (SQLException e) {
-					e.printStackTrace();
-					lock.unlock();
-				}finally{
-					if(lock.isHeldByCurrentThread())
-						lock.unlock();
-				}
-			});
-				futures.add(f);
+					return null;
+				}));
 			}
-			
-			for(Future f : futures){
-				try {
-					f.get();
-				} catch (InterruptedException | ExecutionException e) {
-					e.printStackTrace();
-				}
+
+			for (Future<Void> f : waitForFinish) {
+				f.get();
 			}
-			
-			executor.shutdown();			
-		} catch (SQLException e) {
-			// TODO Auto-generated catch block
+
+			executor.shutdown();
+		} catch (SQLException | InterruptedException | ExecutionException e) {
 			e.printStackTrace();
 		}
+
+//
+//		downloadFolder.mkdir();
+//
+//		HashingAlgorithm hash = new DifferenceHash(bitRes, Precision.Double);
+//
+//		String query = "SELECT uId,contentURL FROM POSTS WHERE type = 'Photo'AND ImageHash = ''";
+//		try {
+//
+//			ReentrantLock lock = new ReentrantLock();
+//			ResultSet rs = conn.createStatement().executeQuery(query);
+//
+//			ExecutorService executor = Executors.newFixedThreadPool(8);
+//			ArrayList<Future> futures = new ArrayList<Future>();
+//			for (int i = 0; i < 8; i++) {
+//
+//				Future f = executor.submit(() -> {
+//					lock.lock();
+//
+//					try {
+//						while (rs.next()) {
+//							int uId = rs.getInt(1);
+//							String contentURL = rs.getString(2);
+//							lock.unlock();
+//
+//							try {
+//								BufferedImage image = ImageIO.read(new URL(contentURL));
+//
+//								ImageIO.write(image, "png", new File("images/" + uId + ".png"));
+//
+//								BigInteger hashValue = hash.hash(image).getHashValue();
+//
+//								updateImageHash.setString(1, hashValue.toString(16));
+//								updateImageHash.setInt(2, uId);
+//								updateImageHash.executeUpdate();
+//
+//								System.out.println(uId);
+//
+//							} catch (IOException e) {
+//								if (lock.isHeldByCurrentThread())
+//									lock.unlock();
+//								e.printStackTrace();
+//							}
+//							lock.lock();
+//						}
+//
+//					} catch (SQLException e) {
+//						e.printStackTrace();
+//						lock.unlock();
+//					} finally {
+//						if (lock.isHeldByCurrentThread())
+//							lock.unlock();
+//					}
+//				});
+//				futures.add(f);
+//			}
+//
+//			for (Future f : futures) {
+//				try {
+//					f.get();
+//				} catch (InterruptedException | ExecutionException e) {
+//					e.printStackTrace();
+//				}
+//			}
+//
+//			executor.shutdown();
+//		} catch (SQLException e) {
+//			// TODO Auto-generated catch block
+//			e.printStackTrace();
+//		}
 	}
-	
-	class ImageData{
+
+	class ImageData {
 		public ImageData(int uId, BigInteger imagehash) {
 			this.uid = uId;
 			this.hash = imagehash;
 		}
+
 		int uid;
 		BigInteger hash;
 	}
+
 	LinkedList<ImageData> imageList = new LinkedList<>();
 
-	
-	private void calculateImageSimilarity(){
-		//9046
-		String query = "SELECT uId,ImageHash FROM POSTS WHERE ImageHash != ''";
+	private void calculateImageSimilarity() {
+
+		DatabaseImageMatcher matcher;
 		try {
-			ResultSet rs = conn.createStatement().executeQuery(query);
-			
-			int threshold = 20;
-			int i = 0;
-			
-			
-			//14 good to find the same kind of memes
-			
-			long start = System.currentTimeMillis();
-			while(rs.next()){
-				int uId = rs.getInt(1);
-				BigInteger imagehash =  new BigInteger(rs.getString(2),16);
+			matcher = new DatabaseImageMatcher("imgHash", "sa", "");
+			matcher.addHashingAlgorithm(new PerceptiveHash(64), 0.1f);
+			// TODO use file name filter
+			File[] images = downloadFolder.listFiles();
+//			
+//			int i = 0;
+//			for(File image: images) {
+//				try {
+//					matcher.addImage(image);
+//					System.out.println(i++);
+//				} catch (IOException e) {
+//					e.printStackTrace();
+//				} catch (SQLException e) {
+//					e.printStackTrace();
+//				}
+			// }
+
+			Map<String, PriorityQueue<Result<String>>> matchingImages = matcher.getAllMatchingImages();
+
+			for(Entry<String, PriorityQueue<Result<String>>> entry : matchingImages.entrySet()) {
 				
-				Iterator<ImageData> iter = imageList.iterator();
 				
-				//System.out.println("Size: " + imageList.size() + " " + imagehash.toString(2));
-				
-				while(iter.hasNext()){
-					ImageData data = iter.next();
-					
-					
-					
-					int distance = ImageMatcher.hammingDistance(data.hash,imagehash);
-					
-					if(distance < threshold){
-						//Potential match inspect further
-						
-						//System.out.println("Distance smaller: " + distance);
-						//do perceptive hashing later just save it to db.
-						addPotentialImageDuplicate.setInt(1, uId);
-						addPotentialImageDuplicate.setInt(2, data.uid);
-						addPotentialImageDuplicate.setInt(3, distance);
-						//addPotentialImageDuplicate.execute();
-					}
+				PriorityQueue<Result<String>> matchedImages = entry.getValue();
+				//Skip. only itself
+				if(matchedImages.size()!=1) {
+					matchedImages.poll();
+					System.out.println(entry.getKey() + ": " + matchedImages);
 				}
-				//After we checked all add it to our list
-				imageList.add(new ImageData(uId,imagehash));
-				
-				//System.out.println(i++);
 			}
-			System.out.println(System.currentTimeMillis() - start);
-		} catch (SQLException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
+			
+		} catch (
+
+		ClassNotFoundException e1) {
+			e1.printStackTrace();
+		} catch (SQLException e1) {
+			e1.printStackTrace();
 		}
-		
-		
-		//SELECT HAMMINGDISTANCE,COUNT(*) FROM POTENTIALDUPLICATES GROUP BY HAMMINGDISTANCE
-		
+
+		System.out.println("Done");
+
+//		// 9046
+//		String query = "SELECT uId,ImageHash FROM POSTS WHERE ImageHash != ''";
+//		try {
+//			ResultSet rs = conn.createStatement().executeQuery(query);
+//
+//			int threshold = 20;
+//			int i = 0;
+//
+//			// 14 good to find the same kind of memes
+//
+//			long start = System.currentTimeMillis();
+//			while (rs.next()) {
+//				int uId = rs.getInt(1);
+//				BigInteger imagehash = new BigInteger(rs.getString(2), 16);
+//
+//				Iterator<ImageData> iter = imageList.iterator();
+//
+//				// System.out.println("Size: " + imageList.size() + " " +
+//				// imagehash.toString(2));
+//
+//				while (iter.hasNext()) {
+//					ImageData data = iter.next();
+//
+//					int distance = ImageMatcher.hammingDistance(data.hash, imagehash);
+//
+//					if (distance < threshold) {
+//						// Potential match inspect further
+//
+//						// System.out.println("Distance smaller: " + distance);
+//						// do perceptive hashing later just save it to db.
+//						addPotentialImageDuplicate.setInt(1, uId);
+//						addPotentialImageDuplicate.setInt(2, data.uid);
+//						addPotentialImageDuplicate.setInt(3, distance);
+//						// addPotentialImageDuplicate.execute();
+//					}
+//				}
+//				// After we checked all add it to our list
+//				imageList.add(new ImageData(uId, imagehash));
+//
+//				// System.out.println(i++);
+//			}
+//			System.out.println(System.currentTimeMillis() - start);
+//		} catch (SQLException e) {
+//			// TODO Auto-generated catch block
+//			e.printStackTrace();
+//		}
+//
+//		// SELECT HAMMINGDISTANCE,COUNT(*) FROM POTENTIALDUPLICATES GROUP BY
+//		// HAMMINGDISTANCE
+
 	}
-	
-	
-	
+
 }
