@@ -4,16 +4,16 @@ import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
-import java.math.BigInteger;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.sql.SQLException;
 import java.util.ArrayList;
-import java.util.LinkedList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.PriorityQueue;
+import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
@@ -22,6 +22,7 @@ import java.util.concurrent.SynchronousQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.logging.Logger;
 
 import javax.imageio.ImageIO;
 
@@ -36,9 +37,13 @@ import com.github.kilianB.matcher.DatabaseImageMatcher;
 
 import de.ipatexi.GagDesktopApp.database.DatabaseManager;
 import de.ipatexi.GagDesktopApp.gag.post.PostItem;
+import de.ipatexi.GagDesktopApp.gag.testClassificationGui.ClassificationGui;
 import de.ipatexi.GagDesktopApp.util.DaemonThreadFactory;
+import javafx.application.Application;
 
 public class GagParser {
+
+	private static final Logger LOGGER = Logger.getLogger(GagParser.class.getSimpleName());
 
 	enum Section {
 		HOT, TRENDING, NEW
@@ -47,7 +52,13 @@ public class GagParser {
 	private final String currentSection = Section.TRENDING.toString();
 	private final String BASE_URL = "https://9gag.com/v1/group-posts/group/default/type/";
 
+	// Database
 	private DatabaseManager dbManager;
+	private DatabaseImageMatcher dbImageMatcher;
+
+	private String subPath = "gagDatabaseNew";
+	private String username = "sa";
+	private String password = "sa";
 
 	/**
 	 * Download image meta data from 9gag
@@ -88,7 +99,7 @@ public class GagParser {
 
 	public GagParser() throws SQLException {
 
-		dbManager = new DatabaseManager();
+		dbManager = new DatabaseManager(subPath, username, password);
 
 		/*
 		 * Create a thread pool executor handling all tasks of the parser
@@ -109,7 +120,8 @@ public class GagParser {
 			downloadImage();
 
 		if (calculateImageSimilarity)
-			calculateImageSimilarity();
+			// calculateImageSimilarity();
+			labelTestImages();
 	}
 
 	/**
@@ -164,6 +176,7 @@ public class GagParser {
 					// System.out.println(postObj);
 
 					PostItem item = PostItem.parseItem(postObj);
+
 					dbManager.addPostItem(item);
 				}
 			} catch (JSONException j) {
@@ -181,9 +194,10 @@ public class GagParser {
 		}
 	}
 
-	int bitRes = 64;
-
-	// Download image data
+	/**
+	 * For each entry in the database download the image to disk if it not already
+	 * present
+	 */
 	private void downloadImage() {
 		downloadFolder.mkdir();
 
@@ -203,8 +217,15 @@ public class GagParser {
 					String key = null;
 					while ((key = queue.poll()) != null) {
 						String url = imagesToDownload.get(key);
-						BufferedImage image = ImageIO.read(new URL(url));
-						ImageIO.write(image, "png", new File(downloadFolder.getAbsolutePath() + "/" + key + ".jpg"));
+
+						// Check if image exist. No need to download again
+						File saveLocation = new File(downloadFolder.getAbsolutePath() + "/" + key + ".jpg");
+						if (!saveLocation.exists()) {
+							BufferedImage image = ImageIO.read(new URL(url));
+							ImageIO.write(image, "png", saveLocation);
+						} else {
+							LOGGER.fine("Image already exists. Skip download");
+						}
 						System.out.println(counter.getAndIncrement() + "/" + imagesToDownload.size());
 					}
 					return null;
@@ -291,112 +312,179 @@ public class GagParser {
 //		}
 	}
 
-	class ImageData {
-		public ImageData(int uId, BigInteger imagehash) {
-			this.uid = uId;
-			this.hash = imagehash;
-		}
+	/**
+	 * Potential duplicate images are assessed if they are duplicates or not
+	 */
+	private void labelTestImages() {
 
-		int uid;
-		BigInteger hash;
-	}
+		/* Start gui */
+		new Thread(() -> {
+			Application.launch(ClassificationGui.class);
+		}).start();
 
-	LinkedList<ImageData> imageList = new LinkedList<>();
+		// Blocks until the gui has fully loaded
+		ClassificationGui gui = ClassificationGui.getReference();
 
-	private void calculateImageSimilarity() {
-
-		DatabaseImageMatcher matcher;
 		try {
-			matcher = new DatabaseImageMatcher("imgHash", "sa", "");
-			matcher.addHashingAlgorithm(new PerceptiveHash(64), 0.1f);
-			// TODO use file name filter
+			DatabaseImageMatcher matcher = DatabaseImageMatcher.getFromDatabase(subPath, username, password, 0);
+
+			// Matcher was not created beforehand lets to it
+			if (matcher == null) {
+				matcher = new DatabaseImageMatcher(subPath, username, password);
+				matcher.addHashingAlgorithm(new PerceptiveHash(64), 0.1f);
+				matcher.serializeToDatabase(0);
+			}
+
+			// Add images
 			File[] images = downloadFolder.listFiles();
-//			
-//			int i = 0;
-//			for(File image: images) {
-//				try {
-//					matcher.addImage(image);
-//					System.out.println(i++);
-//				} catch (IOException e) {
-//					e.printStackTrace();
-//				} catch (SQLException e) {
-//					e.printStackTrace();
-//				}
-			// }
-
-			Map<String, PriorityQueue<Result<String>>> matchingImages = matcher.getAllMatchingImages();
-
-			for(Entry<String, PriorityQueue<Result<String>>> entry : matchingImages.entrySet()) {
-				
-				
-				PriorityQueue<Result<String>> matchedImages = entry.getValue();
-				//Skip. only itself
-				if(matchedImages.size()!=1) {
-					matchedImages.poll();
-					System.out.println(entry.getKey() + ": " + matchedImages);
+			int i = 0;
+			for (File image : images) {
+				try {
+					matcher.addImage(image);
+					System.out.println(i++);
+				} catch (IOException e) {
+					e.printStackTrace();
+				} catch (SQLException e) {
+					e.printStackTrace();
 				}
 			}
 			
-		} catch (
+			// Get already labeled images
 
-		ClassNotFoundException e1) {
-			e1.printStackTrace();
-		} catch (SQLException e1) {
-			e1.printStackTrace();
+			Map<String, PriorityQueue<Result<String>>> matchingImages = matcher.getAllMatchingImages();
+
+			System.out.println("matching images " + matchingImages.size());
+
+			for (Entry<String, PriorityQueue<Result<String>>> entry : matchingImages.entrySet()) {
+
+				PriorityQueue<Result<String>> matchedImages = entry.getValue();
+				// Skip. only itself
+				if (matchedImages.size() != 1) {
+
+					String img0 = entry.getKey();
+
+					while (!matchedImages.isEmpty()) {
+						Result<String> img1Res = matchedImages.poll();
+						String img1 = img1Res.getValue();
+						// Skip itself
+						if (!img0.equals(img1) && !dbManager.areImagesLabeled(img0, img1)) {
+							boolean match = gui.matchingImages(new File(entry.getKey()), new File(img1),
+									img1Res.normalizedHammingDistance);
+							dbManager.addLabeledTestImage(img0, img1, match);
+						}
+					}
+				}
+			}
+			System.out.println("Done");
+		} catch (ClassNotFoundException | SQLException e) {
+			e.printStackTrace();
 		}
+		System.out.println("Done!");
+	}
 
-		System.out.println("Done");
-
-//		// 9046
-//		String query = "SELECT uId,ImageHash FROM POSTS WHERE ImageHash != ''";
+//	private void calculateImageSimilarity() {
+//
 //		try {
-//			ResultSet rs = conn.createStatement().executeQuery(query);
-//
-//			int threshold = 20;
-//			int i = 0;
-//
-//			// 14 good to find the same kind of memes
-//
-//			long start = System.currentTimeMillis();
-//			while (rs.next()) {
-//				int uId = rs.getInt(1);
-//				BigInteger imagehash = new BigInteger(rs.getString(2), 16);
-//
-//				Iterator<ImageData> iter = imageList.iterator();
-//
-//				// System.out.println("Size: " + imageList.size() + " " +
-//				// imagehash.toString(2));
-//
-//				while (iter.hasNext()) {
-//					ImageData data = iter.next();
-//
-//					int distance = ImageMatcher.hammingDistance(data.hash, imagehash);
-//
-//					if (distance < threshold) {
-//						// Potential match inspect further
-//
-//						// System.out.println("Distance smaller: " + distance);
-//						// do perceptive hashing later just save it to db.
-//						addPotentialImageDuplicate.setInt(1, uId);
-//						addPotentialImageDuplicate.setInt(2, data.uid);
-//						addPotentialImageDuplicate.setInt(3, distance);
-//						// addPotentialImageDuplicate.execute();
-//					}
-//				}
-//				// After we checked all add it to our list
-//				imageList.add(new ImageData(uId, imagehash));
-//
-//				// System.out.println(i++);
-//			}
-//			System.out.println(System.currentTimeMillis() - start);
-//		} catch (SQLException e) {
-//			// TODO Auto-generated catch block
+//			Thread.sleep(1000);
+//		} catch (InterruptedException e) {
 //			e.printStackTrace();
 //		}
 //
-//		// SELECT HAMMINGDISTANCE,COUNT(*) FROM POTENTIALDUPLICATES GROUP BY
-//		// HAMMINGDISTANCE
-
-	}
+//		try {
+//			matcher = new DatabaseImageMatcher("imgHash", "sa", "");
+//			matcher.addHashingAlgorithm(new PerceptiveHash(64), 0.1f);
+//			// TODO use file name filter
+//			File[] images = downloadFolder.listFiles();
+////			
+////			int i = 0;
+////			for(File image: images) {
+////				try {
+////					matcher.addImage(image);
+////					System.out.println(i++);
+////				} catch (IOException e) {
+////					e.printStackTrace();
+////				} catch (SQLException e) {
+////					e.printStackTrace();
+////				}
+//			// }
+//
+//			Map<String, PriorityQueue<Result<String>>> matchingImages = matcher.getAllMatchingImages();
+//
+//			ClassificationGui gui = ClassificationGui.ref;
+//
+//			for (Entry<String, PriorityQueue<Result<String>>> entry : matchingImages.entrySet()) {
+//
+//				PriorityQueue<Result<String>> matchedImages = entry.getValue();
+//				// Skip. only itself
+//				if (matchedImages.size() != 1) {
+//					matchedImages.poll();
+//					System.out.println(entry.getKey() + ": " + matchedImages);
+//
+//					gui.matchingImages(new File(entry.getKey()), new File(matchedImages.poll().getValue()));
+//
+//				}
+//			}
+//
+//		} catch (
+//
+//		ClassNotFoundException e1) {
+//			e1.printStackTrace();
+//		} catch (SQLException e1) {
+//			e1.printStackTrace();
+//		}
+//
+//		System.out.println("Done");
+//
+////		// 9046
+////		String query = "SELECT uId,ImageHash FROM POSTS WHERE ImageHash != ''";
+////		try {
+////			ResultSet rs = conn.createStatement().executeQuery(query);
+////
+////			int threshold = 20;
+////			int i = 0;
+////
+////			// 14 good to find the same kind of memes
+////
+////			long start = System.currentTimeMillis();
+////			while (rs.next()) {
+////				int uId = rs.getInt(1);
+////				BigInteger imagehash = new BigInteger(rs.getString(2), 16);
+////
+////				Iterator<ImageData> iter = imageList.iterator();
+////
+////				// System.out.println("Size: " + imageList.size() + " " +
+////				// imagehash.toString(2));
+////
+////				while (iter.hasNext()) {
+////					ImageData data = iter.next();
+////
+////					int distance = ImageMatcher.hammingDistance(data.hash, imagehash);
+////
+////					if (distance < threshold) {
+////						// Potential match inspect further
+////
+////						// System.out.println("Distance smaller: " + distance);
+////						// do perceptive hashing later just save it to db.
+////						addPotentialImageDuplicate.setInt(1, uId);
+////						addPotentialImageDuplicate.setInt(2, data.uid);
+////						addPotentialImageDuplicate.setInt(3, distance);
+////						// addPotentialImageDuplicate.execute();
+////					}
+////				}
+////				// After we checked all add it to our list
+////				imageList.add(new ImageData(uId, imagehash));
+////
+////				// System.out.println(i++);
+////			}
+////			System.out.println(System.currentTimeMillis() - start);
+////		} catch (SQLException e) {
+////			// TODO Auto-generated catch block
+////			e.printStackTrace();
+////		}
+////
+////		// SELECT HAMMINGDISTANCE,COUNT(*) FROM POTENTIALDUPLICATES GROUP BY
+////		// HAMMINGDISTANCE
+//
+//	}
 
 }

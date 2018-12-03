@@ -12,6 +12,7 @@ import java.sql.Timestamp;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.logging.Logger;
 
 import org.h2.jdbcx.JdbcDataSource;
 
@@ -24,6 +25,8 @@ import de.ipatexi.GagDesktopApp.gag.post.Section;
 
 public class DatabaseManager implements AutoCloseable {
 
+	private static Logger LOGGER = Logger.getLogger(DatabaseManager.class.getSimpleName());
+	
 	Connection conn;
 
 	/**
@@ -48,14 +51,22 @@ public class DatabaseManager implements AutoCloseable {
 	
 	PreparedStatement addPotentialImageDuplicate;
 
-	PreparedStatement doesEntryExist;
+	PreparedStatement doesPostEntryExist;
+	
+	
+	PreparedStatement addLabeledTestImage;
+	
+	PreparedStatement doesLabeledTestEntryExist;
+	
+	
+	
 
-	public DatabaseManager() throws SQLException {
+	public DatabaseManager(String subPath, String username, String password) throws SQLException {
 		// Setup database connection
 		JdbcDataSource ds = new JdbcDataSource();
-		ds.setURL("jdbc:h2:~/gagDatabaseNew");
-		ds.setUser("sa");
-		ds.setPassword("sa");
+		ds.setURL("jdbc:h2:~/"+subPath);
+		ds.setUser(username);
+		ds.setPassword(password);
 		conn = ds.getConnection();
 
 		createTables();
@@ -106,6 +117,10 @@ public class DatabaseManager implements AutoCloseable {
 			stmt.execute("CREATE TABLE IMAGEPOST "
 					+ "(postId  VARCHAR(15), url VARCHAR(200), width INTEGER, height INTEGER,format VARCHAR(5), PRIMARY KEY( postId, url), FOREIGN KEY (postId) REFERENCES POSTS(id))");
 
+		if (!doesTableExist(conn, "LABELEDTESTIMAGES"))
+			stmt.execute("CREATE TABLE LABELEDTESTIMAGES "
+					+ "(postId  VARCHAR(15), postId2 VARCHAR(15), match BOOLEAN, PRIMARY KEY( postId, postId2), FOREIGN KEY (postId) REFERENCES POSTS(id), FOREIGN KEY (postId2) REFERENCES POSTS(id))");
+		
 		// REQUIRES UNIQUENESS FOR WHAT EVER REASON.
 
 //		if (!doesTableExist(conn, "POTENTIALDUPLICATES"))
@@ -139,7 +154,12 @@ public class DatabaseManager implements AutoCloseable {
 //		addPotentialImageDuplicate = conn
 //				.prepareStatement("INSERT INTO POTENTIALDUPLICATES (postUId,postUId1,hammingDistance) VALUES(?,?,?)");
 
-		doesEntryExist = conn.prepareStatement("SELECT * FROM POSTS WHERE id = ?");
+		doesPostEntryExist = conn.prepareStatement("SELECT * FROM POSTS WHERE id = ?");
+		
+		addLabeledTestImage = conn.prepareStatement("INSERT INTO LABELEDTESTIMAGES (postId,postId2,match) VALUES(?,?,?)");
+		
+		doesLabeledTestEntryExist = conn.prepareStatement("SELECT * FROM LABELEDTESTIMAGES WHERE postId = ? AND postId2 = ?");
+		
 	}
 
 	private boolean doesTableExist(Connection connection, String tableName) throws SQLException {
@@ -159,8 +179,10 @@ public class DatabaseManager implements AutoCloseable {
 	//TODO implement a lock for each statement
 	public synchronized void addPostItem(PostItem item) throws SQLException {
 
-		if (doesEntryExist(item.getId()))
+		if (doesEntryExist(item.getId())) {
+			LOGGER.fine("Post id already exist. Skip");
 			return;
+		}
 
 		Section section = item.getSection();
 		// Merge section
@@ -281,10 +303,29 @@ public class DatabaseManager implements AutoCloseable {
 		return result;
 	}
 	
+	
+	public void addLabeledTestImage(String id0,String id1, boolean match) throws SQLException {
+		addLabeledTestImage.setString(1,id0);
+		addLabeledTestImage.setString(2,id1);
+		addLabeledTestImage.setBoolean(3,match);
+		addLabeledTestImage.executeUpdate();
+		//Also insert inverse
+		addLabeledTestImage.setString(1,id1);
+		addLabeledTestImage.setString(2,id0);
+		addLabeledTestImage.setBoolean(3,match);
+	}
+	
+	public boolean areImagesLabeled(String id0,String id1) throws SQLException {
+		doesLabeledTestEntryExist.setString(1,id0);
+		doesLabeledTestEntryExist.setString(2,id1);
+		ResultSet rs = doesLabeledTestEntryExist.executeQuery();
+		return rs.next();
+	}
+	
 
 	private boolean doesEntryExist(String uId) throws SQLException {
-		doesEntryExist.setString(1, uId);
-		ResultSet result = doesEntryExist.executeQuery();
+		doesPostEntryExist.setString(1, uId);
+		ResultSet result = doesPostEntryExist.executeQuery();
 		if (result.next()) {
 			return true;
 		}
